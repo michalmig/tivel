@@ -50,9 +50,9 @@ PRODUCT.md wins.
    these, stop and flag it instead of building it.
 7. **Facts vs interpretation.** Deterministic analysis (git, AST, reference
    graph) is the only source of truth for code structure. LLM output is
-   interpretation and must carry anchors (symbolId + contentHash). Never let
-   LLM-generated content masquerade as computed fact. Blast radius is computed,
-   never generated.
+   interpretation and must be anchored as the contract defines (rule 3). Never
+   let LLM-generated content masquerade as computed fact. Blast radius is
+   computed, never generated.
 8. **Scope-agnostic fact layer.** Code-intelligence and the
    Extract→Cluster→Sequence→Narrate→Verify pipeline take "a set of symbols
    with a graph and a boundary" as input — never couple them to diffs. Do NOT
