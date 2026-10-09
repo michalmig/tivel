@@ -1,0 +1,32 @@
+# --- Client-derived material: NEVER commit. This repository is public. ---
+# Tours, fixtures, golden datasets and validation outputs built from real
+# client changesets stay out of git history permanently. Committed fixtures
+# must be synthetic or taken from public repositories.
+/private/
+**/*.private.*
+# Note: exclude run CONTENTS, not the directory itself — git does not
+# descend into an excluded directory, so a negation under one is ignored.
+docs/validation/run-*/*
+# findings.md holds metrics and failure patterns only — never code excerpts.
+!docs/validation/run-*/findings.md
+fixtures/real/
+fixtures/**/client-*
+
+# --- Node ---
+node_modules/
+dist/
+build/
+coverage/
+*.tsbuildinfo
+.turbo/
+
+# --- Env and local config ---
+.env
+.env.*
+!.env.example
+
+# --- Editors / OS ---
+.DS_Store
+.idea/
+.vscode/*
+!.vscode/extensions.json

@@ -6,7 +6,7 @@
 >
 > Category: **Code Comprehension Workspace** — long-term scope: any bounded slice of a codebase; go-to-market wedge: change review (see "Product horizon")
 >
-> Distribution: **local-first standalone desktop app with CLI entry point**
+> Distribution: **local-first, CLI-first.** The UI is a web app served by a local server and opened in a browser window. A desktop shell is a later packaging decision, not an architectural one.
 >
 > Repository: public `tivel` repo under the author's personal GitHub profile; transferable to a dedicated org later.
 
@@ -19,7 +19,7 @@ This version intentionally changes the following decisions. Everything else from
 1. **Voice is removed from MVP scope.** Voice is a delivery channel and a v2 feature, not the core. The core is the interactive guided comprehension of a changeset. Positioning language must not say "voice-first". Architectural requirement: the session/tour engine is **event-driven and channel-agnostic** so voice can be added later without a rewrite.
 2. **A validation phase precedes all infrastructure.** Validate the riskiest hypothesis before writing pipeline code. *(Superseded by the v2.0 changelog below: the hypothesis changed, and with it the phase. The principle stands.)*
 3. **Primary language ecosystem: TypeScript.** Tivel itself is built in Node/TypeScript; the first supported analyzed ecosystem is TypeScript (ts-morph / tsserver in-process). C#/Roslyn comes later.
-4. **Evidence anchoring: symbol + content hash**, not file + line ranges. Line ranges are display-only denormalization. This is required to survive rebases/force-pushes and changeset evolution during review.
+4. **Evidence anchoring moves off raw line ranges.** Line ranges become display-only denormalization. *(The specific identity chosen here — symbol + content hash — was superseded by the review changelog below: anchors are location-first, `commit + file + quote`, with symbol identity as fact-layer enrichment.)*
 5. **MVP ends at the MVP line** in Section 11. Voice and persistent review-session state move post-MVP.
 6. **Lazy depth model is explicit.** The precomputed artifact is a skeleton; depth is generated on demand during the session.
 
@@ -37,6 +37,21 @@ New evidence reopened one closed decision. Recorded here rather than silently ed
 4. **Do not parse narrative markdown into structure.** Extracting structure from prose is throwaway work that pollutes the signal. The producer emits structured data directly.
 
 **What does not change.** Facts vs interpretation, anchoring, MVP boundary, the decision filter, TypeScript-first, voice out of MVP, local-first. The fact layer is deferred in time, not dropped: until it exists, every anchor is `verified: false` and the UI says so.
+
+## Changelog vs v2.0 — independent review (2026-10-09)
+
+An independent model reviewed the plan without seeing it first (`docs/validation/independent-review-prompt.md`), then compared. It converged on the Phase 0–2 ordering. Accepted findings:
+
+1. **Phase 2 chat must be real**, not mocked — the gate's primary metric depends on it.
+2. **The gate's baseline was a strawman.** The honest baseline is markdown plus follow-up prompts in an agent session.
+3. **Epistemic status was missing from the contract** although the trust model demands it. Added as a mandatory field.
+4. **Anchoring reopened.** `symbolId + contentHash` was justified by a post-MVP scenario and breaks on templates, migrations and config. Anchors are now location-first (`commit + file + quote`) with symbol identity as enrichment.
+5. **Reference errors and claim errors split.** Counting them together would have justified a fact layer that only fixes one of them.
+6. **Client-derived artifacts must never reach this public repo.**
+7. **Browser-first**, desktop shell deferred; language agnosticism expressed as fact-layer tiers.
+8. **Voice moved after dogfood-and-delete**; the custom pipeline is no longer a closed decision.
+
+Rejected: a monetization plan now (the stated acceptable outcomes do not require one) and a full timebox regime (only Phase 2 is timeboxed).
 
 ---
 
@@ -78,7 +93,9 @@ Strategic note: this segment **grows** as agent adoption grows — the more code
 
 - **CLI is the front door**: `tivel review <base>..<target>` / `tivel review` (working tree) launched from the terminal the user already lives in; the app opens with context loaded. Zero manual "open app → pick repo → pick branch" steps.
 - **Hook into the pre-merge ritual**: invokable as a step after an agent session (e.g., a Claude Code command / git hook) so Tivel is a stage in an existing process, not a competitor for attention.
-- Suggested runtime shape: local analysis server + CLI + desktop shell (Tauri or Electron — decide at implementation time; boring and proven wins) communicating over a local socket. Not a hard commitment; the CLI-first entry is the commitment.
+- Runtime shape: **local analysis server + CLI + a web UI the CLI opens in a browser window** (`--app`-style chromeless window where available). The server does every privileged thing — filesystem, git, language servers, model calls; the UI is a plain web app talking to it over HTTP/WS.
+- **Binding rule: no logic in the shell.** As long as that holds, wrapping the same UI in Tauri or Electron later is a packaging exercise, not a rewrite — so the shell decision stays deferred instead of being made now. A desktop shell buys tray, global shortcuts and native menus; it buys nothing this product needs today.
+- Things sometimes assumed to require a desktop shell, and where they actually live: file editing (server writes; Monaco/CodeMirror render in the browser), dependency navigation and go-to-definition (server + fact layer), microphone for the later voice channel (works on localhost), "open in IDE" (`vscode://` / `idea://` handlers). None of them is a reason to ship a shell.
 - Local-first: code and the local index stay on the machine; the only thing that leaves is the minimal context sent to the model API. State it clearly in the UI. Never silently upload a repository.
 
 ## 4. Architecture principle: facts vs interpretation
@@ -101,11 +118,36 @@ Consequences:
 - Pure "RAG over a diff" is explicitly rejected. Questions like "who calls `consumeToken()`?" are answered by graph traversal, not semantic similarity.
 - Static analysis never claims to prove runtime behavior. Inferred flows are marked as inferred.
 
+### Fact layer capability tiers (language agnosticism)
+
+Only one layer in the system knows the language. The contract, the UI, the git layer and the agent-based producer are all language-agnostic — quote-based anchoring (Section 6a) works identically in TypeScript, C#, Go, YAML and a SQL migration.
+
+Consequence, stated so it is never designed away: **Tivel works on any language from day one, at reduced fidelity.** The fact layer is a per-ecosystem upgrade, never a precondition.
+
+```text
+T0    git only — diff, history, paths. Works everywhere. No verification,
+      no computed blast radius; every anchor stays unverified.
+T0.5  tree-sitter — symbols and approximate call sites without resolution.
+      Nearly every language, fast, cheap.
+T1    resolved references — real call/reference graph, verified anchors,
+      computed blast radius. Per ecosystem: ts-morph for TypeScript;
+      a generic LSP client for the rest (references / definition /
+      documentSymbol are standard server capabilities).
+```
+
+Requirements this imposes:
+
+- The UI and the contract must degrade gracefully: a tier is a property of the run, surfaced to the user, never an assumption in the code.
+- No fact-layer types leak above the change model. No abstraction built in advance for it — just no coupling.
+- Dogfooding note: the author's current work is .NET + Angular. The Angular half exercises T1, the .NET half exercises T0/T0.5. That is an advantage — the degraded path is the path every new ecosystem starts on, so it gets tested from the beginning instead of discovered at the first non-TypeScript user.
+
 ### Trust model (carried over from v1 — unchanged)
 
 1. Show evidence. 2. Show uncertainty. 3. Distinguish fact / documented intent / inference / unknown. 4. Make source navigation easy. 5. Do not fabricate architectural intent. 6. Prefer "I cannot determine that" over plausible fiction. 7. Mark inferred flows as inferred. 8. Surface unsupported claims as hypotheses.
 
-In this product, **trust is not a feature — it is the entire product**. A verification tool that itself requires verification is dead on arrival.
+In this product, **trust is not a feature — it is the entire product**. But state the claim honestly, because the strong version is false: Verify can only check that symbols exist, quotes match and cited call edges are real. Intent, "risky because" and runtime behavior can never be verified deterministically, so a promise of verified truth would be a promise the product cannot keep.
+
+What Tivel actually offers is **checkability plus declared epistemic status**: every claim is one click from the evidence it rests on, and every claim says whether it is fact, documented intent, inference or unknown (Section 6a). A tool whose inferences are labelled as inferences is trustworthy; one that presents them as findings is not.
 
 ## 5. Analysis pipeline
 
@@ -166,7 +208,7 @@ RuntimeFlow (inferred, marked as such),
 Evidence, Claim, AnalysisRun
 ```
 
-Evidence anchoring (changed vs v1): anchor = `symbolId + contentHash` (+ optional hunk id). Line ranges are stored only as display hints and are recomputed after changeset updates. Design consideration to keep in mind (not to fully build in MVP): the changeset **will** change mid-review (author pushes fixes); the model must be re-derivable without corrupting existing anchors.
+Evidence anchoring: as defined in Section 6a — location-first (`commit + file + quote`), with `symbolId` and `contentHash` added by a T1 fact layer. Line ranges are display hints, recomputed after changeset updates. Design consideration to keep in mind (not to build in MVP): the changeset **will** change mid-review as the author pushes fixes, so the model must be re-derivable without corrupting existing anchors — a quote survives a rebase that moves it, which is why it is the primary identity.
 
 Relations: only those supportable with acceptable reliability (`contains, imports, calls, calledBy, references, tests, modifies` first; the rest earns its way in).
 
@@ -186,15 +228,25 @@ The UI is written once against this contract and survives the producer swap. The
 
 Second-order benefit, and the reason this ordering is right: **the contract is defined by what the consumer needs**. The Structured Change Model (Section 6) is then designed against known UI requirements instead of guesses.
 
-Shape (illustrative; refine during Phase 0, then freeze for the UI work):
+Freeze policy: **soft-freeze at the end of Phase 0** — stable enough to build the UI against, explicitly revisable at the validation gate. Hard-freezing before the gate would lock in guesses about what the consumer needs.
+
+Completeness test for the contract: **a `TourArtifact` must be able to answer all ten questions of the comprehension test (Section 10).** Questions 5 (affected but unchanged areas), 8 (protecting tests) and 9 (untested important behavior) need a structured home, not a paragraph of prose.
+
+Shape (illustrative, not a specification):
 
 ```ts
 interface TourArtifact {
   schemaVersion: number;
   changeSet: { repo: string; base: string; head: string };
-  overview: { intent: string; surface: SurfaceItem[]; startHere: StopId };
+  factTier: 'T0' | 'T0.5' | 'T1';   // see Section 4; drives UI degradation
+  overview: { intent: Claim; surface: SurfaceItem[]; startHere: StopId };
   stops: TourStop[];
   hotspots: Hotspot[];
+  coverage: {                        // answers questions 5, 8, 9
+    affectedUnchanged: Claim[];
+    protectingTests: Claim[];
+    testGaps: Claim[];
+  };
 }
 
 interface TourStop {
@@ -208,23 +260,56 @@ interface TourStop {
 
 interface NarrativeSegment {
   text: string;
-  anchorRefs: AnchorId[];          // what to highlight while this segment is shown
+  status: EpistemicStatus;         // mandatory — see below
+  anchorRefs: AnchorId[];          // what to highlight while this is shown
 }
 
+/** Trust model point 3, made structural. */
+type EpistemicStatus =
+  | 'fact'               // derived deterministically; verifiable
+  | 'documented-intent'  // stated by a ticket, PR, spec or agent plan
+  | 'inference'          // the model's reasoning; not verifiable
+  | 'unknown';           // explicitly undetermined
+
+interface Claim {
+  text: string;
+  status: EpistemicStatus;
+  anchorRefs: AnchorId[];
+}
+
+/** Location-first so it works in any language and in non-symbol files. */
 interface Anchor {
   id: AnchorId;
+  side: 'base' | 'head';           // deleted code can only be anchored on base
+  commit: string;
   file: string;
-  symbol?: string;
-  range?: { startLine: number; endLine: number };  // display hint only
+  quote: string;                   // exact snippet — the portable identity
+  range?: { startLine: number; endLine: number };  // display hint, recomputable
+  symbolId?: string;               // enrichment when a fact layer resolved one
   contentHash?: string;
-  verified: boolean;               // v0: always false — the skill cannot verify
+  verified: boolean;               // T0/T0.5: always false
+}
+
+interface SurfaceItem {
+  kind: 'file' | 'module' | 'endpoint' | 'migration' | 'config' | 'dependency';
+  label: string;
+  anchorRefs: AnchorId[];
+}
+
+interface Hotspot {
+  title: string;
+  why: Claim;                      // carries its own epistemic status
+  priority: 'first' | 'high' | 'normal';
+  anchorRefs: AnchorId[];
 }
 ```
 
-Two deliberate details:
+Four deliberate decisions:
 
 - **Narrative is segmented, not prose.** Each segment knows what to highlight. This is the structural answer to the "wall of text" problem, and the same field later drives synchronized TTS highlighting (Section 5, voice readiness).
-- **`verified` is explicit from day one.** In v0 no fact layer exists, so every anchor is an unverified model claim and the UI must show that. Counting how many v0 anchors turn out to be wrong is also the measurement that justifies the fact layer's cost.
+- **Epistemic status is mandatory on every claim.** Trust model point 3 requires distinguishing fact / documented intent / inference / unknown; a contract without that field cannot express the product's central promise. The UI renders the distinction; it is not decoration.
+- **Anchors are location-first, symbols optional.** The portable identity is `commit + file + quote`, which works in a C# file, an Angular template, a SQL migration and a YAML config alike, and is checkable with a string search at tier T0. `symbolId` and `contentHash` are enrichments a fact layer adds at T1, not the primary key. This also keeps the Verify stage useful before any language support exists.
+- **`verified` and `factTier` are explicit from day one.** Before the fact layer exists every anchor is an unverified model claim and the UI must say so. Counting how many of them are wrong is also the measurement that decides whether the fact layer is worth its cost (Section 10).
 
 ## 7. Agent tool surface (illustrative)
 
@@ -259,7 +344,7 @@ Layout direction (from v1, still valid): overview bar / story sidebar / main wor
 
 > **Can Tivel materially reduce the time required to build a correct mental model of a non-trivial changeset?**
 
-Primary metric: **time to useful mental model** (target: ~30 min baseline → 5–10 min without accuracy loss).
+Secondary metric: time to a useful mental model (rough target: ~30 min unaided → 5–10 min). Useful as a direction, not as the gate — the single primary metric is defined in Section 10, and only one metric may be primary.
 
 ### Required
 
@@ -325,13 +410,22 @@ That feeling depends at least as much on representation and interaction as on na
 
 ### Validation gate (after Phase 2 in Section 11)
 
-Run a real, non-trivial, not-yet-reviewed changeset through the interface and measure:
+**Primary metric — exits from the tool.** How many times the author had to leave for an IDE, a grep or a separate prompt to understand something the tour did not cover. "I never had to leave" is the operational definition of the teammate feeling.
 
-1. **Exits from the tool** — how many times the author had to leave for an IDE, grep or a separate prompt to understand something the tour did not cover. **This is the primary metric**; "I never had to leave" is the operational definition of the teammate feeling.
-2. **Time to answer the 10 questions**, versus the same changeset consumed as markdown from the existing skill.
-3. **Unverified-anchor error rate** — of the v0 anchors (all `verified: false`), how many point at something that does not exist or does not say what the narration claims. This sizes the fact layer's value in numbers.
+Supporting measurements:
 
-Kill criterion: if the interactive version is not meaningfully better than reading the markdown, the product thesis is wrong and no amount of pipeline work fixes it — stop before Phase 3.
+- **Time to answer the 10 questions**, against an honest baseline (below).
+- **Reference errors** — anchors pointing at something that does not exist or is not where the anchor says. Cheap to check by string search at any tier; **this is what a fact layer fixes**.
+- **Claim errors** — the code exists but does not do what the narration says. **A fact layer does not fix these.** Counting them together with reference errors would justify the wrong investment, so they are counted separately.
+
+Design rules for the gate, because the obvious version of this test is rigged to pass:
+
+1. **Honest baseline.** The comparison is not "the same changeset as markdown". It is the author's actual current workflow: the generated markdown **plus follow-up questions in the same agent session**. Beating markdown alone proves nothing.
+2. **Different changesets, not the same one twice.** Running one changeset through both modes measures the learning effect, not the tool. Use changesets of comparable size and alternate which mode goes first.
+3. **Thresholds pre-registered in this repo before the first run.** "Meaningfully better" decided after seeing the result is not a criterion. Write the numbers down first, in `docs/validation/`.
+4. **The judge is the author, who wants it to pass.** This cannot be eliminated at n=1; it can only be bounded by the three rules above. Record it as a known weakness of the evidence rather than pretending otherwise.
+
+Kill criterion: if the interactive version does not clear the pre-registered thresholds against the honest baseline, the product thesis is wrong and no amount of pipeline work fixes it — stop before Phase 3.
 
 Caveat on evidence quality, stated so it is not forgotten: this gate is n=1, judged by the product's author on a codebase he knows. It tests the interaction model, not market demand.
 
@@ -354,28 +448,46 @@ Phase 0   Repo skeleton + TourArtifact contract (Section 6a) as JSON Schema
 Phase 1   Adapt the existing review skill: refine its inputs and make it emit
           TourArtifact JSON directly. Never parse narrative markdown into
           structure. The adapter is throwaway; the prompts survive into Phase 5.
-Phase 2   apps/web — the real interaction model, fed by TourArtifact JSON
-          (fixture files; no backend yet): stop list, code view with
-          anchor-synchronized highlighting, navigation, anchored chat scoped to
-          the current stop, explicit "unverified" treatment of v0 anchors.
+Phase 2   apps/web — the real interaction model, fed by TourArtifact JSON:
+          stop list, code view with anchor-synchronized highlighting,
+          navigation, explicit "unverified" treatment of anchors, and
+          anchored chat that calls the existing agent harness headlessly with
+          the tour and the current stop as context. The chat must be real: the
+          primary gate metric is exits from the tool, and unanswered questions
+          are what cause them, so a mocked chat makes the gate meaningless.
           Interaction model must be designed properly; visual polish may wait.
+          Timeboxed — if it is not gate-ready in a few weeks of evenings, that
+          is itself information.
           ← VALIDATION GATE (Section 10). Stop here if it fails.
 Phase 3   CLI + git ingestion (`tivel review main..HEAD`). No AI.
           Tests on temp git repos.
 Phase 4   Code-intelligence vertical slice (TypeScript only): symbols, ranges,
           imports, references, hunk→symbol mapping, relation graph. Fact layer.
-Phase 5   Real pipeline (Extract→Cluster→Sequence→Narrate→Verify) emitting the
-          same TourArtifact; provider-neutral LLM abstraction; anchors become
-          verified; Structured Change Model + SQLite + migrations.
+Phase 5   Producer hardening — OPEN DECISION, taken at the gate, not now:
+          (a) a custom Extract→Cluster→Sequence→Narrate→Verify pipeline with
+              its own LLM abstraction, or
+          (b) keep the agent-based producer permanently and expose the fact
+              layer to it as tools (e.g. MCP), with Verify as a deterministic
+              post-step over the emitted TourArtifact.
+          (b) preserves the thing actually validated over 10 months — skill +
+          agent + free repo exploration — and costs far fewer evenings; (a)
+          buys deterministic sequencing, finer instrumentation and a tighter
+          privacy boundary, since an agentic producer reads what it likes,
+          which is in tension with "only minimal context leaves the machine".
+          Verify, anchoring and the contract are identical either way.
+          Persistence (SQLite, and whether versioned migrations are warranted
+          for a rebuildable cache) is decided here too, not earlier.
 Phase 6   Session agent: tool-based Q&A over the model + UI actions, as a
           channel-agnostic event stream. Key test: select a symbol, ask "what
           calls this and why does it matter?" → deterministic callers +
           anchored synthesis.
 ---------  MVP line ----------
 Phase 7   Review-session state (reviewed/skipped/concerns) + summary.
-Phase 8   Voice channel: STT/TTS or realtime API over the existing event
+Phase 8   Dogfood hard, then delete features that do not improve comprehension.
+          Deleting precedes adding a channel — doing it the other way round
+          means polishing voice for features that should not exist.
+Phase 9   Voice channel: STT/TTS or realtime API over the existing event
           stream; push-to-talk acceptable; test recognition of "Tivel" early.
-Phase 9   Dogfood hard, then delete features that do not improve comprehension.
 Phase 10  Feature-slice scope (`tivel explore <entryPoint>`): first step down
           the scope ladder (Section 9a) — reuses the pipeline with a different
           scope selector. Gate: wedge loop proven in dogfooding first.
@@ -392,6 +504,8 @@ Consequence to accept consciously: between Phase 2 and Phase 5 the system runs o
 - Instrument early: extraction time, indexing time, LLM latency, token usage, estimated cost per analysis run. Bottlenecks visible, optimization deferred.
 - Vertical slices; no speculative abstractions; the project earns complexity gradually.
 - Monorepo, roughly: `apps/{cli,runtime,web}` + `packages/{change-model,git-analysis,code-intelligence,review-agent,persistence}` — but never create empty packages for diagram aesthetics.
+- **Nothing derived from client code enters this repository.** It is public. Fixtures, tours, golden datasets and validation outputs built from real client changesets live outside it, and `.gitignore` guards the paths where they would land. Committed fixtures are synthetic or taken from public repositories. This is the one mistake in the whole plan that cannot be undone: git history, forks and indexers make it permanent.
+- Confidentiality is a per-engagement question, not a product setting: which providers a client permits, and what may leave the machine. An agentic producer reads whatever it decides to read, so "only minimal context leaves the machine" is a design goal to verify per setup, not a guarantee to print in the UI.
 
 ## 13. Project goal & posture
 
