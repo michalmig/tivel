@@ -17,24 +17,31 @@ PRODUCT.md, PRODUCT.md wins.
 
 1. **Phase discipline.** Follow the implementation sequence in PRODUCT.md
    (Section 11). Do not start work belonging to a later phase without the
-   current phase's exit criteria being met. Phase −1 (validation) gates all
-   infrastructure work.
-2. **MVP boundary.** No voice, no review-session persistence, no GitHub/GitLab
+   current phase's exit criteria being met. The validation gate after Phase 2
+   (PRODUCT.md Section 10) blocks all fact-layer and pipeline work: do not
+   start ts-morph, SQLite or the LLM pipeline before it passes.
+2. **Contract first.** The `TourArtifact` contract (PRODUCT.md Section 6a) is
+   the seam between producer and consumer. Write the UI against the contract,
+   never against whatever currently produces it. Never derive structure by
+   parsing narrative markdown — the producer emits structured data. Until the
+   fact layer exists, every anchor is `verified: false` and the UI must say so;
+   never present an unverified anchor as a computed fact.
+3. **MVP boundary.** No voice, no review-session persistence, no GitHub/GitLab
    integrations, no multi-repo, no enterprise features. If a task drifts toward
    these, stop and flag it instead of building it.
-3. **Facts vs interpretation.** Deterministic analysis (git, AST, reference
+4. **Facts vs interpretation.** Deterministic analysis (git, AST, reference
    graph) is the only source of truth for code structure. LLM output is
    interpretation and must carry anchors (symbolId + contentHash). Never let
    LLM-generated content masquerade as computed fact. Blast radius is computed,
    never generated.
-4. **Scope-agnostic fact layer.** Code-intelligence and the
+5. **Scope-agnostic fact layer.** Code-intelligence and the
    Extract→Cluster→Sequence→Narrate→Verify pipeline take "a set of symbols
    with a graph and a boundary" as input — never couple them to diffs. Do NOT
    build a ComprehensionScope abstraction yet; just avoid the coupling.
-5. **Channel-agnostic session engine.** The interactive session is a stream of
+6. **Channel-agnostic session engine.** The interactive session is a stream of
    typed events (focus / narrate / annotate / answer / navigate). No
    presentation concerns in the engine.
-6. **Decision filter** for any feature or suggestion: *does this help a human
+7. **Decision filter** for any feature or suggestion: *does this help a human
    understand or verify a non-trivial software change faster and with more
    confidence?* If no — don't build it, don't suggest it.
 
@@ -53,7 +60,8 @@ PRODUCT.md, PRODUCT.md wins.
   vertical slices; the project earns complexity gradually.
 - All code, comments, identifiers, commit messages, and docs in **English**.
 - Test analysis logic seriously — it IS the product. Use temporary git repos in
-  tests for git-analysis code. Maintain golden datasets from Phase −1 onward.
+  tests for git-analysis code. Maintain golden datasets from the validation gate
+  onward.
 - Provider-neutral LLM abstraction; never couple domain logic to one vendor.
 - Instrument from the start: extraction/indexing time, LLM latency, token
   usage, estimated cost per analysis run. Make bottlenecks visible; don't

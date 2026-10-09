@@ -17,11 +17,26 @@
 This version intentionally changes the following decisions. Everything else from v1 that is not contradicted here remains valid background material (`docs/brief-v1.md`).
 
 1. **Voice is removed from MVP scope.** Voice is a delivery channel and a v2 feature, not the core. The core is the interactive guided comprehension of a changeset. Positioning language must not say "voice-first". Architectural requirement: the session/tour engine is **event-driven and channel-agnostic** so voice can be added later without a rewrite.
-2. **A validation phase (Phase −1) precedes all infrastructure.** The riskiest hypothesis — "can an LLM generate a narrative that actually builds comprehension?" — is tested in ~1 week with throwaway tooling before any pipeline code is written.
+2. **A validation phase precedes all infrastructure.** Validate the riskiest hypothesis before writing pipeline code. *(Superseded by the v2.0 changelog below: the hypothesis changed, and with it the phase. The principle stands.)*
 3. **Primary language ecosystem: TypeScript.** Tivel itself is built in Node/TypeScript; the first supported analyzed ecosystem is TypeScript (ts-morph / tsserver in-process). C#/Roslyn comes later.
 4. **Evidence anchoring: symbol + content hash**, not file + line ranges. Line ranges are display-only denormalization. This is required to survive rebases/force-pushes and changeset evolution during review.
-5. **MVP = Phases 0–5** of the v1 sequence. Voice (v1 Phase 6) and persistent review-session state (v1 Phase 7) move post-MVP.
+5. **MVP ends at the MVP line** in Section 11. Voice and persistent review-session state move post-MVP.
 6. **Lazy depth model is explicit.** The precomputed artifact is a skeleton; depth is generated on demand during the session.
+
+## Changelog vs brief v2.0 (2026-10-09)
+
+New evidence reopened one closed decision. Recorded here rather than silently edited.
+
+**Evidence.** The author has been building and using changeset-analysis skills in real client work for ~10 months — three iterations, three ecosystems, three clients. The generated analyses were consistently comprehensible and did let him understand unfamiliar changesets. The hypothesis "can an LLM generate a narrative that builds comprehension?" is therefore **already answered: yes**, with far stronger evidence than a one-week test could produce.
+
+**What this changes.**
+
+1. **The validation phase is redefined and renumbered** (the old "Phase −1" is gone; the gate now sits after Phase 2). It no longer validates narrative quality. The remaining unvalidated risk is **presentation and interaction**: today's output is a wall of text plus diagrams the author rarely looks at, with follow-up questions costing extra prompts and extra context-switching. The new question is whether an interactive, anchored presentation of the same content produces qualitatively different comprehension.
+2. **Contract-first, not pipeline-first.** A `TourArtifact` contract (Section 6a) is defined before anything else. The existing skill is adapted to emit it; the UI consumes it. The pipeline later replaces the producer behind the same contract. The seam is the architecture, not a prototype.
+3. **The UI moves to the front of the sequence** (Section 11). Building two phases of infrastructure before first seeing the thing that carries the value was the wrong order once the narrative risk disappeared.
+4. **Do not parse narrative markdown into structure.** Extracting structure from prose is throwaway work that pollutes the signal. The producer emits structured data directly.
+
+**What does not change.** Facts vs interpretation, anchoring, MVP boundary, the decision filter, TypeScript-first, voice out of MVP, local-first. The fact layer is deferred in time, not dropped: until it exists, every anchor is `verified: false` and the UI says so.
 
 ---
 
@@ -157,6 +172,60 @@ Relations: only those supportable with acceptable reliability (`contains, import
 
 Persistence: **SQLite**, versioned schema + migrations from day one, cheap full rebuild, stale-index detection, analysis-run identity. No external DB infrastructure.
 
+## 6a. TourArtifact — the producer/consumer contract
+
+The contract is the **seam** of the whole system: it decouples whatever produces a tour from whatever presents it.
+
+```text
+PRODUCER                      CONTRACT              CONSUMER
+existing skill (v0)      →   TourArtifact JSON  →   apps/web
+real pipeline (v1)       ↗                          (permanent)
+```
+
+The UI is written once against this contract and survives the producer swap. The only throwaway artifact in the whole plan is the v0 adapter that makes the existing skill emit this shape.
+
+Second-order benefit, and the reason this ordering is right: **the contract is defined by what the consumer needs**. The Structured Change Model (Section 6) is then designed against known UI requirements instead of guesses.
+
+Shape (illustrative; refine during Phase 0, then freeze for the UI work):
+
+```ts
+interface TourArtifact {
+  schemaVersion: number;
+  changeSet: { repo: string; base: string; head: string };
+  overview: { intent: string; surface: SurfaceItem[]; startHere: StopId };
+  stops: TourStop[];
+  hotspots: Hotspot[];
+}
+
+interface TourStop {
+  id: StopId;
+  title: string;
+  kind: 'intent' | 'entry-point' | 'core-logic' | 'plumbing' | 'mechanical';
+  narrative: NarrativeSegment[];   // segmented, never a wall of text
+  anchors: Anchor[];
+  suggestedQuestions?: string[];
+}
+
+interface NarrativeSegment {
+  text: string;
+  anchorRefs: AnchorId[];          // what to highlight while this segment is shown
+}
+
+interface Anchor {
+  id: AnchorId;
+  file: string;
+  symbol?: string;
+  range?: { startLine: number; endLine: number };  // display hint only
+  contentHash?: string;
+  verified: boolean;               // v0: always false — the skill cannot verify
+}
+```
+
+Two deliberate details:
+
+- **Narrative is segmented, not prose.** Each segment knows what to highlight. This is the structural answer to the "wall of text" problem, and the same field later drives synchronized TTS highlighting (Section 5, voice readiness).
+- **`verified` is explicit from day one.** In v0 no fact layer exists, so every anchor is an unverified model claim and the UI must show that. Counting how many v0 anchors turn out to be wrong is also the measurement that justifies the fact layer's cost.
+
 ## 7. Agent tool surface (illustrative)
 
 ```text
@@ -197,7 +266,7 @@ Primary metric: **time to useful mental model** (target: ~30 min baseline → 5�
 1. Local changeset input: `main..HEAD` (working tree if cheap).
 2. Change Overview.
 3. Change Story (narrative-ordered tour).
-4. Interactive Change Map.
+4. Interactive Change Map. **Under review** — in ~10 months of real use the author generated diagrams routinely and rarely looked at them. Decide at the Section 10 gate whether the map earns its place or is cut from MVP; do not build it before that evidence exists.
 5. Symbol Inspector with evidence.
 6. **Text-based** anchored assistant with UI-navigation actions.
 
@@ -233,15 +302,38 @@ Constraints on this horizon, stated so they are never forgotten:
 
 ## 10. Validation plan
 
-### Phase −1 — throwaway validation (~1 week, before any product code)
+### Already validated (do not re-test)
 
-1. Take a real, fresh, non-trivial changeset the author has **not yet reviewed**.
-2. Use existing agent tooling (Claude Code on the repo) with a structured prompt/skill to generate a markdown tour: Overview + Change Story + hotspots, following the anchoring spirit (agent greps its own evidence).
-3. Evaluate with the 10-question test below; then do a classic manual review and count what the tour missed or fabricated.
-4. One confident fabrication = the Verify stage becomes the top design priority. Generic, comprehension-free narrative = revisit Cluster/Sequence prompting before building anything.
-5. Keep the outputs as the first **golden dataset** for testing the real pipeline later.
+**LLM-generated changeset narration works.** ~10 months of real use across three skill iterations, three ecosystems and three clients. Generated analyses were comprehensible and did build understanding of unfamiliar changesets. Treat this as settled; spending a phase re-proving it is waste.
 
-Kill criterion: if after honest iteration the generated tour is not clearly better than `git diff` + ad-hoc prompting, stop and rethink before writing infrastructure.
+Known weaknesses of that output — these are the product requirements, not reasons to doubt the approach:
+
+- wall of text; the reader still has to excavate it
+- diagrams are generated but rarely looked at
+- follow-up questions cost extra prompts and context-switching
+- non-deterministic; occasional fabrication with a confident tone
+
+### The open hypothesis
+
+> **Does an interactive, anchored presentation of the same narration produce qualitatively better comprehension than a markdown document?**
+
+Author's north star for success:
+
+> *After a session I should feel like a teammate just walked me through their changeset — what it does for the business and how it achieves it technically.*
+
+That feeling depends at least as much on representation and interaction as on narration quality. It cannot be tested with markdown; it needs a working interface.
+
+### Validation gate (after Phase 2 in Section 11)
+
+Run a real, non-trivial, not-yet-reviewed changeset through the interface and measure:
+
+1. **Exits from the tool** — how many times the author had to leave for an IDE, grep or a separate prompt to understand something the tour did not cover. **This is the primary metric**; "I never had to leave" is the operational definition of the teammate feeling.
+2. **Time to answer the 10 questions**, versus the same changeset consumed as markdown from the existing skill.
+3. **Unverified-anchor error rate** — of the v0 anchors (all `verified: false`), how many point at something that does not exist or does not say what the narration claims. This sizes the fact layer's value in numbers.
+
+Kill criterion: if the interactive version is not meaningfully better than reading the markdown, the product thesis is wrong and no amount of pipeline work fixes it — stop before Phase 3.
+
+Caveat on evidence quality, stated so it is not forgotten: this gate is n=1, judged by the product's author on a codebase he knows. It tests the interaction model, not market demand.
 
 ### The 10-question comprehension test (from v1 — unchanged)
 
@@ -253,38 +345,50 @@ At least 3 real changesets. Record every misleading answer — those failures be
 
 ## 11. Implementation sequence
 
+Ordering principle: **spend the earliest evenings on what is not known.** Git ingestion, ts-morph and SQLite carry near-zero technical risk — they will get built. The interaction model is the open question, so it comes first.
+
 ```text
-Phase −1  Throwaway validation (see above). GO/NO-GO gate.
-Phase 0   Repo skeleton + CLI + git ingestion (`tivel inspect main..HEAD`,
-          JSON output). No AI. Tests on temp git repos.
-Phase 1   Code-intelligence vertical slice (TypeScript only):
-          symbols, ranges, imports, references, hunk→symbol mapping,
-          basic relation graph. Debug output first.
-Phase 2   Structured Change Model + SQLite persistence + migrations.
-Phase 3   Minimal web workspace: overview, files, symbols, diff,
-          symbol details, graph.
-Phase 4   AI enrichment through the Extract→Cluster→Sequence→Narrate→Verify
-          pipeline; provider-neutral LLM abstraction; claims stored with
-          anchors + certainty class + run id.
-Phase 5   Session agent: tool-based Q&A over the model + UI actions
-          (event stream). Key test: select a symbol, ask "what calls this
-          and why does it matter?" → deterministic callers + anchored synthesis.
+Phase 0   Repo skeleton + TourArtifact contract (Section 6a) as JSON Schema
+          + TS types in packages/change-model. Committed first: it is the seam
+          every later phase is written against.
+Phase 1   Adapt the existing review skill: refine its inputs and make it emit
+          TourArtifact JSON directly. Never parse narrative markdown into
+          structure. The adapter is throwaway; the prompts survive into Phase 5.
+Phase 2   apps/web — the real interaction model, fed by TourArtifact JSON
+          (fixture files; no backend yet): stop list, code view with
+          anchor-synchronized highlighting, navigation, anchored chat scoped to
+          the current stop, explicit "unverified" treatment of v0 anchors.
+          Interaction model must be designed properly; visual polish may wait.
+          ← VALIDATION GATE (Section 10). Stop here if it fails.
+Phase 3   CLI + git ingestion (`tivel review main..HEAD`). No AI.
+          Tests on temp git repos.
+Phase 4   Code-intelligence vertical slice (TypeScript only): symbols, ranges,
+          imports, references, hunk→symbol mapping, relation graph. Fact layer.
+Phase 5   Real pipeline (Extract→Cluster→Sequence→Narrate→Verify) emitting the
+          same TourArtifact; provider-neutral LLM abstraction; anchors become
+          verified; Structured Change Model + SQLite + migrations.
+Phase 6   Session agent: tool-based Q&A over the model + UI actions, as a
+          channel-agnostic event stream. Key test: select a symbol, ask "what
+          calls this and why does it matter?" → deterministic callers +
+          anchored synthesis.
 ---------  MVP line ----------
-Phase 6   Review-session state (reviewed/skipped/concerns) + summary.
-Phase 7   Voice channel: STT/TTS or realtime API over the existing event
+Phase 7   Review-session state (reviewed/skipped/concerns) + summary.
+Phase 8   Voice channel: STT/TTS or realtime API over the existing event
           stream; push-to-talk acceptable; test recognition of "Tivel" early.
-Phase 8   Dogfood hard, then delete features that do not improve comprehension.
-Phase 9   Feature-slice scope (`tivel explore <entryPoint>`): first step down
+Phase 9   Dogfood hard, then delete features that do not improve comprehension.
+Phase 10  Feature-slice scope (`tivel explore <entryPoint>`): first step down
           the scope ladder (Section 9a) — reuses the pipeline with a different
           scope selector. Gate: wedge loop proven in dogfooding first.
 ```
+
+Consequence to accept consciously: between Phase 2 and Phase 5 the system runs on an unverified producer. That is intentional — it buys an early answer to the only open question — but no claim of verified anchoring may be made until Phase 5 lands.
 
 ## 12. Engineering principles
 
 - Production-quality code; explicit error handling; all code/comments/identifiers in English.
 - Deterministic analysis wherever possible; LLMs used intentionally, never by default.
 - Provider-independent domain logic; no coupling to one model vendor.
-- Test the analysis logic (it is the product); golden datasets from Phase −1 onward.
+- Test the analysis logic (it is the product); build golden datasets from the validation gate onward.
 - Instrument early: extraction time, indexing time, LLM latency, token usage, estimated cost per analysis run. Bottlenecks visible, optimization deferred.
 - Vertical slices; no speculative abstractions; the project earns complexity gradually.
 - Monorepo, roughly: `apps/{cli,runtime,web}` + `packages/{change-model,git-analysis,code-intelligence,review-agent,persistence}` — but never create empty packages for diagram aesthetics.
@@ -303,7 +407,9 @@ Known market risk (stated so it is never forgotten): the industry talks "human i
 
 ## 15. Immediate next actions
 
-1. Verify domain + npm scope for `tivel` (quietly; naming stays closed).
-2. Create public repo `tivel` under the personal profile; commit this file as `PRODUCT.md`; archive v1 as `docs/brief-v1.md`.
-3. Run **Phase −1** on a real changeset from current work.
-4. Only after a GO: Phase 0.
+Done: domain `tivel.dev` registered; npm scope `@tivel/*` reserved (the unscoped name is blocked by npm's similarity filter — the CLI binary is still `tivel` via `bin`); public repo created.
+
+1. Archive brief v1 as `docs/brief-v1.md`.
+2. **Phase 0** — write the `TourArtifact` contract and commit it before anything else.
+3. **Phase 1** — make the existing skill emit that contract.
+4. **Phase 2** — build `apps/web` against it, then run the Section 10 gate.
