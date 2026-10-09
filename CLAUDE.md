@@ -70,7 +70,10 @@ PRODUCT.md wins.
 - Voice: v2 channel, not in MVP.
 - First T1 fact layer: **TypeScript** (ts-morph / tsserver, in-process).
 - Tivel implementation stack: **Node.js + TypeScript**, monorepo.
-- Distribution: **CLI-first, browser-based UI**; desktop shell deferred.
+- Distribution: **CLI-first, browser-based UI**; a desktop shell is a stated
+  future goal, deferred. Keep it a packaging exercise: no logic in the shell,
+  standard web APIs only (the system webview is not Chromium), and native
+  server dependencies chosen deliberately. See PRODUCT.md Section 3.
 - Evidence anchoring: **location-first** — `commit + file + quote`, with
   `symbolId` / `contentHash` as fact-layer enrichment.
 
